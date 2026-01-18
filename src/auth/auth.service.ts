@@ -1,8 +1,8 @@
-import { Injectable, BadRequestException, UnauthorizedException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import * as bcrypt from 'bcrypt';
+import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { InjectRepository } from '@nestjs/typeorm';
+import * as bcrypt from 'bcrypt';
+import { Repository } from 'typeorm';
 
 import { User } from '../entities/user.entity';
 import { Wallet } from '../entities/wallet.entity';
@@ -10,44 +10,54 @@ import { Wallet } from '../entities/wallet.entity';
 @Injectable()
 export class AuthService {
   constructor(
-    @InjectRepository(User) private userRepo: Repository<User>,
-    @InjectRepository(Wallet) private walletRepo: Repository<Wallet>,
-    private jwtService: JwtService,
+    @InjectRepository(User) private readonly userRepo: Repository<User>,
+    @InjectRepository(Wallet) private readonly walletRepo: Repository<Wallet>,
+    private readonly jwtService: JwtService,
   ) {}
 
   async register(email: string, password: string) {
-    const existing = await this.userRepo.findOne({ where: { email } });
-    if (existing) throw new BadRequestException('Email already exists');
+    const e = (email ?? '').trim().toLowerCase();
+    if (!e) throw new BadRequestException('Email is required');
+    if (!password || password.length < 6) {
+      throw new BadRequestException('Password must be at least 6 characters');
+    }
 
-    const hash = await bcrypt.hash(password, 10);
+    const exists = await this.userRepo.findOne({ where: { email: e } });
+    if (exists) throw new BadRequestException('Email already in use');
 
+    const passwordHash = await bcrypt.hash(password, 10);
+
+   
     const user = this.userRepo.create({
-      email,
-      passwordHash: hash,
+      email: e,
+      passwordHash,
       createdAt: new Date(),
     });
 
-    const savedUser = await this.userRepo.save(user);
+    const saved = await this.userRepo.save(user);
 
+    // tworzymy wallet od razu po rejestracji
     const wallet = this.walletRepo.create({
-      userId: savedUser.id,
-      balancePLN: '0',
-    });
-
+      userId: saved.id,
+      balancePLN: '0.00',
+    } as any);
     await this.walletRepo.save(wallet);
 
-    return { userId: savedUser.id };
+    return { ok: true, userId: saved.id };
   }
 
   async login(email: string, password: string) {
-    const user = await this.userRepo.findOne({ where: { email } });
+    const e = (email ?? '').trim().toLowerCase();
+
+    const user = await this.userRepo.findOne({ where: { email: e } });
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) throw new UnauthorizedException('Invalid credentials');
 
-    const token = await this.jwtService.signAsync({ sub: user.id, email: user.email });
+    const payload = { sub: user.id, email: user.email };
+    const access_token = await this.jwtService.signAsync(payload);
 
-    return { token, userId: user.id };
+    return { access_token };
   }
 }

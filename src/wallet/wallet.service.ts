@@ -1,45 +1,54 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Wallet } from '../entities/wallet.entity';
-import { Transaction } from '../entities/transaction.entity';
+import { BadRequestException, Injectable, InternalServerErrorException } from "@nestjs/common";
+import { InjectRepository } from "@nestjs/typeorm";
+import { Repository } from "typeorm";
+import { Wallet } from "../entities/wallet.entity";
 
 @Injectable()
 export class WalletService {
   constructor(
-    @InjectRepository(Wallet) private walletRepo: Repository<Wallet>,
-    @InjectRepository(Transaction) private txRepo: Repository<Transaction>,
+    @InjectRepository(Wallet)
+    private readonly walletRepo: Repository<Wallet>,
   ) {}
 
-  async getWalletByUserId(userId: string) {
-    const wallet = await this.walletRepo.findOne({ where: { userId } });
-    if (!wallet) throw new NotFoundException('Wallet not found');
-    return wallet;
+  async getOrCreateByUserId(userId: string): Promise<Wallet> {
+    try {
+      const existing = await this.walletRepo.findOne({ where: { userId } });
+      if (existing) return existing;
+
+   const created = this.walletRepo.create({
+  userId,
+  balancePLN: "0.00",
+} as any) as unknown as Wallet;
+
+
+const saved = (await this.walletRepo.save(created as unknown as Wallet)) as unknown as Wallet;
+return saved;
+
+    } catch (e) {
+      console.error("WALLET/me error:", e);
+      throw new InternalServerErrorException("Wallet read failed");
+    }
   }
 
-  async deposit(userId: string, amount: number) {
-    if (!Number.isFinite(amount) || amount <= 0) {
-      throw new BadRequestException('Amount must be > 0');
+  async depositPLN(userId: string, amountPLN: number) {
+    if (!Number.isFinite(amountPLN) || amountPLN <= 0) {
+      throw new BadRequestException("amountPLN must be > 0");
     }
 
-    const wallet = await this.getWalletByUserId(userId);
+    try {
+      const wallet = await this.getOrCreateByUserId(userId);
 
-    const current = Number(wallet.balancePLN);
-    wallet.balancePLN = String((current + amount).toFixed(2));
-    await this.walletRepo.save(wallet);
+      const current = Number((wallet as any).balancePLN ?? 0);
+      const next = current + amountPLN;
 
-    await this.txRepo.save(
-      this.txRepo.create({
-        userId,
-        walletId: wallet.id,
-        type: 'DEPOSIT',
-        amount: String(amount.toFixed(2)),
-        currencyCode: null,
-        rate: null,
-        createdAt: new Date(),
-      }),
-    );
+      (wallet as any).balancePLN = next.toFixed(2);
 
-    return wallet;
+      await this.walletRepo.save(wallet as Wallet);
+
+      return { ok: true, balancePLN: (wallet as any).balancePLN };
+    } catch (e) {
+      console.error("WALLET/deposit error:", e);
+      throw new InternalServerErrorException("Deposit failed");
+    }
   }
 }

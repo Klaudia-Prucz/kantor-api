@@ -1,5 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { RatesService } from './rates.service';
+import { Query } from '@nestjs/common';
 
 @Controller('rates')
 export class RatesController {
@@ -14,4 +15,13 @@ export class RatesController {
   ping() {
     return { ok: true };
   }
+
+  @Get('history')
+history(
+  @Query('code') code: string,
+  @Query('from') from?: string,
+  @Query('to') to?: string,
+) {
+  return this.ratesService.getHistory(code, from, to);
+}
 }

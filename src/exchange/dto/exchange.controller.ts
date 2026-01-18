@@ -1,21 +1,20 @@
-import { Body, Controller, Post, Req } from '@nestjs/common';
-import { ExchangeService } from './exchange.service'; // ✅ TU
-import { ExchangeDto } from './exchange.dto';     // ✅ TU
+import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
+import { ExchangeService } from './exchange.service';
+import { ExchangeDto } from '../dto/exchange.dto';
 
+@UseGuards(JwtAuthGuard)
 @Controller('exchange')
 export class ExchangeController {
   constructor(private readonly exchangeService: ExchangeService) {}
 
   @Post('buy')
   buy(@Req() req: any, @Body() dto: ExchangeDto) {
-  
-    const userId = req.user?.id ?? 1;
-    return this.exchangeService.buy(userId, dto);
+    return this.exchangeService.buy(Number(req.user.id), dto);
   }
 
   @Post('sell')
   sell(@Req() req: any, @Body() dto: ExchangeDto) {
-    const userId = req.user?.id ?? 1;
-    return this.exchangeService.sell(userId, dto);
+    return this.exchangeService.sell(Number(req.user.id), dto);
   }
 }
