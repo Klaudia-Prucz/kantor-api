@@ -26,39 +26,70 @@ export class ExchangeService {
     private readonly rateRepo: Repository<ExchangeRateEntity>,
   ) {}
 
-  private normalizeCurrency(code: string) {
-    return (code ?? '').trim().toUpperCase();
+  /** DB u Ciebie ewidentnie oczekuje BIGINT (22P02), więc userId musi być cyframi */
+  private normalizeUserId(userId: unknown): string {
+    const raw = String(userId ?? '').trim();
+    if (!raw) throw new BadRequestException('Missing user id');
+
+    // jeśli DB ma BIGINT/INT dla userId -> wymagamy cyfr
+    if (!/^\d+$/.test(raw)) {
+      throw new BadRequestException('Invalid user id');
+    }
+    return raw; // np. "12"
+  }
+
+  private normalizeCurrency(code: unknown) {
+    return String(code ?? '').trim().toUpperCase();
   }
 
   private validateDto(dto: ExchangeDto) {
     const currency = this.normalizeCurrency(dto.currency);
-    if (!currency || currency.length !== 3) throw new BadRequestException('Invalid currency code');
-    if (currency === 'PLN') throw new BadRequestException('Use DEPOSIT for PLN');
-    if (typeof dto.amount !== 'number' || !Number.isFinite(dto.amount) || dto.amount <= 0) {
+
+    if (!currency || currency.length !== 3) {
+      throw new BadRequestException('Invalid currency code');
+    }
+    if (currency === 'PLN') {
+      throw new BadRequestException('Use DEPOSIT for PLN');
+    }
+
+    // DTO + ValidationPipe zwykle gwarantuje number, ale zostawiamy twardy check
+    const amount = Number((dto as any)?.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
       throw new BadRequestException('amount must be a positive number');
     }
-    return { currency, amount: dto.amount };
+
+    return { currency, amount };
   }
 
-  private async getLatestRate(currency: string, managerRepo?: Repository<ExchangeRateEntity>) {
-    const repo = managerRepo ?? this.rateRepo;
+  private async getLatestRate(currency: string, repoOverride?: Repository<ExchangeRateEntity>) {
+    const repo = repoOverride ?? this.rateRepo;
 
-    // bierzemy ostatnią datę z DB
     const latest = await repo
       .createQueryBuilder('r')
       .select('MAX(r.rateDate)', 'max')
       .getRawOne<{ max: string | null }>();
 
     const latestDate = latest?.max;
-    if (!latestDate) throw new BadRequestException('No rates in DB. Call /rates/latest first.');
+    if (!latestDate) {
+      throw new BadRequestException('No rates in DB. Call /rates/latest first.');
+    }
 
     const row = await repo.findOne({ where: { currencyCode: currency, rateDate: latestDate } });
-    if (!row) throw new BadRequestException(`No rate for ${currency} at ${latestDate}`);
+    if (!row) {
+      throw new BadRequestException(`No rate for ${currency} at ${latestDate}`);
+    }
 
-    return { rateDate: latestDate, buy: Number(row.buyRate), sell: Number(row.sellRate) };
+    const buy = Number(row.buyRate);
+    const sell = Number(row.sellRate);
+    if (!Number.isFinite(buy) || !Number.isFinite(sell)) {
+      throw new BadRequestException(`Invalid rates in DB for ${currency} at ${latestDate}`);
+    }
+
+    return { rateDate: latestDate, buy, sell };
   }
 
-  async buy(userId: number, dto: ExchangeDto) {
+  async buy(userId: unknown, dto: ExchangeDto) {
+    const uid = this.normalizeUserId(userId);
     const { currency, amount } = this.validateDto(dto);
 
     return this.dataSource.transaction(async (manager) => {
@@ -67,8 +98,8 @@ export class ExchangeService {
       const txRepo = manager.getRepository(Transaction);
       const rateRepo = manager.getRepository(ExchangeRateEntity);
 
-      // 1) wallet (blokada na czas transakcji)
-      const wallet = await walletRepo.findOne({ where: { userId: String(userId) } });
+      // 1) wallet
+      const wallet = await walletRepo.findOne({ where: { userId: uid } });
       if (!wallet) throw new BadRequestException('Wallet not found');
 
       // 2) kurs
@@ -77,6 +108,7 @@ export class ExchangeService {
 
       // 3) sprawdzamy PLN
       const walletPLN = Number(wallet.balancePLN);
+      if (!Number.isFinite(walletPLN)) throw new BadRequestException('Invalid PLN balance in wallet');
       if (walletPLN < costPLN) throw new BadRequestException('Insufficient PLN balance');
 
       // 4) aktualizujemy PLN
@@ -96,13 +128,14 @@ export class ExchangeService {
         });
       } else {
         const cur = Number(bal.amount);
+        if (!Number.isFinite(cur)) throw new BadRequestException(`Invalid ${currency} balance amount`);
         bal.amount = (cur + amount).toFixed(2);
       }
       await balanceRepo.save(bal);
 
-      // 6) transakcja (dopasuj pola do swojej encji Transaction!)
+      // 6) transakcja
       const tx = txRepo.create({
-        userId: String(userId), 
+        userId: uid,
         walletId: wallet.id,
         currencyCode: currency,
         type: 'BUY',
@@ -124,7 +157,8 @@ export class ExchangeService {
     });
   }
 
-  async sell(userId: number, dto: ExchangeDto) {
+  async sell(userId: unknown, dto: ExchangeDto) {
+    const uid = this.normalizeUserId(userId);
     const { currency, amount } = this.validateDto(dto);
 
     return this.dataSource.transaction(async (manager) => {
@@ -133,18 +167,20 @@ export class ExchangeService {
       const txRepo = manager.getRepository(Transaction);
       const rateRepo = manager.getRepository(ExchangeRateEntity);
 
-      const wallet = await walletRepo.findOne({ where: { userId: String(userId) } });
+      const wallet = await walletRepo.findOne({ where: { userId: uid } });
       if (!wallet) throw new BadRequestException('Wallet not found');
 
       const rate = await this.getLatestRate(currency, rateRepo);
       const gainPLN = amount * rate.sell;
 
-      // sprawdzamy saldo waluty obcej
+      // saldo waluty obcej
       const bal = await balanceRepo.findOne({
         where: { walletId: wallet.id, currencyCode: currency },
       });
       if (!bal) throw new BadRequestException(`No ${currency} balance`);
+
       const cur = Number(bal.amount);
+      if (!Number.isFinite(cur)) throw new BadRequestException(`Invalid ${currency} balance amount`);
       if (cur < amount) throw new BadRequestException(`Insufficient ${currency} balance`);
 
       // odejmujemy walutę
@@ -153,12 +189,14 @@ export class ExchangeService {
 
       // dodajemy PLN
       const walletPLN = Number(wallet.balancePLN);
+      if (!Number.isFinite(walletPLN)) throw new BadRequestException('Invalid PLN balance in wallet');
+
       wallet.balancePLN = (walletPLN + gainPLN).toFixed(2);
       await walletRepo.save(wallet);
 
       // transakcja
       const tx = txRepo.create({
-        userId: String(userId), 
+        userId: uid,
         walletId: wallet.id,
         currencyCode: currency,
         type: 'SELL',

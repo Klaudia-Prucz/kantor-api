@@ -1,4 +1,10 @@
+import { IsNumber, IsString, Length } from 'class-validator';
+
 export class ExchangeDto {
-  currency!: string; // np. "USD"
-  amount!: number;   // ilość waluty obcej
+  @IsString()
+  @Length(3, 3)
+  currency!: string;
+
+  @IsNumber()
+  amount!: number;
 }
