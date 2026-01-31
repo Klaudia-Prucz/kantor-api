@@ -14,7 +14,7 @@ export class Transaction {
   walletId!: string;
 
   @Column({ name: 'currency_code', type: 'varchar', length: 3, nullable: true })
-  currencyCode!: string | null;
+  currencyCode?: string | null;
 
   @Column({ type: 'varchar', length: 10 })
   type!: 'BUY' | 'SELL' | 'DEPOSIT';
@@ -22,8 +22,17 @@ export class Transaction {
   @Column({ type: 'decimal', precision: 12, scale: 2 })
   amount!: string;
 
+  @Column({ type: 'numeric', precision: 12, scale: 2, name: 'pln_amount', nullable: true })
+  plnAmount!: string;
+
+  @Column({ type: 'numeric', precision: 12, scale: 2, name: 'ccy_amount', nullable: true })
+  ccyAmount?: string | null;
+
+  @Column({ type: 'varchar', length: 12, default: 'POSTED' })
+  status!: 'PENDING' | 'POSTED' | 'CANCELLED';
+
   @Column({ type: 'decimal', precision: 12, scale: 6, nullable: true })
-  rate!: string | null;
+  rate?: string | null;
 
   @Column({ name: 'created_at', type: 'timestamp' })
   createdAt!: Date;

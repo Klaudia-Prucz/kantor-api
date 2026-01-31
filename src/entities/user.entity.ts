@@ -6,6 +6,12 @@ export class User {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id!: string;
 
+    @Column({ name: "first_name", type: "varchar", length: 80 })
+  firstName!: string;
+
+  @Column({ name: "last_name", type: "varchar", length: 80 })
+  lastName!: string;
+
   @Column({ type: 'varchar', length: 255, unique: true })
   email!: string;
 

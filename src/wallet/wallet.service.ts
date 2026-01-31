@@ -73,15 +73,18 @@ private readonly txRepo: Repository<Transaction>,
     await this.walletRepo.save(wallet);
 
     const tx = this.txRepo.create({
-  userId: uid,          
-  walletId: wallet.id,
-  type: "DEPOSIT",
-  currencyCode: "PLN",     
-  amount: amountPLN.toFixed(2),
-  rate: null,
-} as any);
+      userId: uid,
+      walletId: wallet.id,
+      type: "DEPOSIT",
+      currencyCode: null,
+      rate: null,
+      amount: amountPLN.toFixed(2),
+      plnAmount: amountPLN.toFixed(2),
+      ccyAmount: null,
+      status: "POSTED",
+    } as any);
 
-await this.txRepo.save(tx);
+    await this.txRepo.save(tx);
 
     return this.enrichWithBalances(wallet);
   }
